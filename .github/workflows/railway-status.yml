@@ -1,0 +1,60 @@
+name: Check Railway Bot Status
+
+on:
+  workflow_dispatch:
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check deployment status
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: |
+          set -e
+
+          QUERY='
+          query deployments($input: DeploymentListInput!, $first: Int) {
+            deployments(input: $input, first: $first) {
+              edges {
+                node {
+                  id
+                  status
+                  createdAt
+                }
+              }
+            }
+          }'
+
+          VARIABLES=$(cat <<EOF
+          {
+            "input": {
+              "projectId": "$PROJECT_ID",
+              "serviceId": "$SERVICE_ID"
+            },
+            "first": 5
+          }
+          EOF
+          )
+
+          RESPONSE=$(curl -sS \
+            -X POST \
+            "https://backboard.railway.com/graphql/v2" \
+            -H "Project-Access-Token: $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -n \
+              --arg query "$QUERY" \
+              --argjson variables "$VARIABLES" \
+              '{query: $query, variables: $variables}')")
+
+          echo "$RESPONSE" | jq .
+
+          if echo "$RESPONSE" | jq -e '.errors' >/dev/null; then
+            echo "Railway API returned an error."
+            exit 1
+          fi
+
+          echo "Railway deployment query successful."
