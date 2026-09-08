@@ -1,0 +1,36 @@
+name: Test Railway API
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test Railway API
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -e
+
+          RESPONSE=$(curl -sS \
+            -X POST \
+            "https://backboard.railway.com/graphql/v2" \
+            -H "Project-Access-Token: $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"query":"query { projectToken { projectId environmentId } }"}')
+
+          echo "$RESPONSE"
+
+          if echo "$RESPONSE" | grep -q '"errors"'; then
+            echo "Railway API returned an error."
+            exit 1
+          fi
+
+          if ! echo "$RESPONSE" | grep -q '"projectId"'; then
+            echo "Railway API test failed."
+            exit 1
+          fi
+
+          echo "Railway API connection successful."
