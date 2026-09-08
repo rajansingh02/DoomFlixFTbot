@@ -74,11 +74,11 @@ jobs:
             --data "$(jq -n \
               --arg id "$DEPLOYMENT_ID" \
               '{
-                query: "mutation deploymentRedeploy($id: String!) { deploymentRedeploy(id: $id) }",
-                variables: {
-                  id: $id
-                }
-              }')")
+  query: "mutation deploymentRedeploy($id: String!) { deploymentRedeploy(id: $id) { id status } }",
+  variables: {
+    id: $id
+  }
+}')")
 
           echo "$RESPONSE" | jq .
 
