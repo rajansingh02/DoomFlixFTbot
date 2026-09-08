@@ -1,0 +1,91 @@
+name: TEST - Stop Railway Bot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get latest active deployment
+        id: deployment
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: |
+          set -e
+
+          RESPONSE=$(curl -sS \
+            -X POST \
+            "https://backboard.railway.com/graphql/v2" \
+            -H "Project-Access-Token: $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -n \
+              --arg projectId "$PROJECT_ID" \
+              --arg serviceId "$SERVICE_ID" \
+              '{
+                query: "query deployments($input: DeploymentListInput!, $first: Int) { deployments(input: $input, first: $first) { edges { node { id status createdAt } } } }",
+                variables: {
+                  input: {
+                    projectId: $projectId,
+                    serviceId: $serviceId
+                  },
+                  first: 5
+                }
+              }')")
+
+          echo "$RESPONSE" | jq .
+
+          if echo "$RESPONSE" | jq -e '.errors' >/dev/null; then
+            echo "Failed to query Railway."
+            exit 1
+          fi
+
+          DEPLOYMENT_ID=$(echo "$RESPONSE" | jq -r '
+            .data.deployments.edges
+            | map(.node)
+            | map(select(.status == "SUCCESS"))
+            | sort_by(.createdAt)
+            | reverse
+            | .[0].id
+          ')
+
+          if [ -z "$DEPLOYMENT_ID" ] || [ "$DEPLOYMENT_ID" = "null" ]; then
+            echo "No running SUCCESS deployment found."
+            exit 1
+          fi
+
+          echo "Stopping deployment: $DEPLOYMENT_ID"
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Stop deployment
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+        run: |
+          set -e
+
+          RESPONSE=$(curl -sS \
+            -X POST \
+            "https://backboard.railway.com/graphql/v2" \
+            -H "Project-Access-Token: $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -n \
+              --arg id "$DEPLOYMENT_ID" \
+              '{
+                query: "mutation deploymentStop($id: String!) { deploymentStop(id: $id) }",
+                variables: {
+                  id: $id
+                }
+              }')")
+
+          echo "$RESPONSE" | jq .
+
+          if echo "$RESPONSE" | jq -e '.errors' >/dev/null; then
+            echo "Railway failed to stop the deployment."
+            exit 1
+          fi
+
+          echo "Stop request sent successfully."
