@@ -36,6 +36,7 @@ from telegram.ext import (
 
 load_dotenv()
 
+print("RAILWAY BOT_TOKEN CHECK:", bool(os.getenv("BOT_TOKEN")))
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
