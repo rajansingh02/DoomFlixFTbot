@@ -74,11 +74,11 @@ jobs:
             --data "$(jq -n \
               --arg id "$DEPLOYMENT_ID" \
               '{
-  query: "mutation deploymentRedeploy($id: String!) { deploymentRedeploy(id: $id) { id status } }",
-  variables: {
-    id: $id
-  }
-}')")
+                query: "mutation deploymentRedeploy($id: String!) { deploymentRedeploy(id: $id) { id status } }",
+                variables: {
+                  id: $id
+                }
+              }')")
 
           echo "$RESPONSE" | jq .
 
@@ -87,4 +87,51 @@ jobs:
             exit 1
           fi
 
-          echo "Start request sent successfully."
+          echo "Redeploy request sent successfully."
+
+      - name: Wait for deployment
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+        run: |
+          set -e
+
+          echo "Waiting for Railway deployment to become active..."
+
+          for i in {1..30}; do
+
+            RESPONSE=$(curl -sS \
+              -X POST \
+              "https://backboard.railway.com/graphql/v2" \
+              -H "Project-Access-Token: $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "$(jq -n \
+                --arg id "$DEPLOYMENT_ID" \
+                '{
+                  query: "query deployment($id: String!) { deployment(id: $id) { id status } }",
+                  variables: {
+                    id: $id
+                  }
+                }')")
+
+            echo "$RESPONSE" | jq .
+
+            STATUS=$(echo "$RESPONSE" | jq -r '.data.deployment.status // empty')
+
+            echo "Current status: $STATUS"
+
+            if [ "$STATUS" = "SUCCESS" ]; then
+              echo "Deployment is active."
+              exit 0
+            fi
+
+            if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CRASHED" ]; then
+              echo "Deployment failed with status: $STATUS"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "Timed out waiting for deployment."
+          exit 1
