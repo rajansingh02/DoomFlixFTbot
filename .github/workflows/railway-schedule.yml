@@ -2,11 +2,17 @@ name: Railway Bot Schedule
 
 on:
   schedule:
-    # 08:00 IST = 02:30 UTC
-    - cron: "30 2 * * *"
+    # 08:00 IST
+    - cron: "0 8 * * *"
+      timezone: "Asia/Kolkata"
 
-    # 00:00 IST = 18:30 UTC
-    - cron: "30 18 * * *"
+    # TEMPORARY: 10:00 IST
+    - cron: "0 10 * * *"
+      timezone: "Asia/Kolkata"
+
+    # 00:00 IST
+    - cron: "0 0 * * *"
+      timezone: "Asia/Kolkata"
 
   workflow_dispatch:
     inputs:
@@ -27,6 +33,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # =========================================================
+      # Determine action
+      # =========================================================
+
       - name: Determine action
         id: action
         env:
@@ -34,21 +44,33 @@ jobs:
           SCHEDULE: ${{ github.event.schedule }}
           MANUAL_ACTION: ${{ inputs.action }}
         run: |
-          set -e
+          set -euo pipefail
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             ACTION="$MANUAL_ACTION"
-          elif [ "$SCHEDULE" = "30 2 * * *" ]; then
+
+          elif [ "$SCHEDULE" = "0 8 * * *" ]; then
             ACTION="start"
-          elif [ "$SCHEDULE" = "30 18 * * *" ]; then
+
+          elif [ "$SCHEDULE" = "0 10 * * *" ]; then
+            ACTION="start"
+
+          elif [ "$SCHEDULE" = "0 0 * * *" ]; then
             ACTION="stop"
+
           else
             echo "Unknown schedule: $SCHEDULE"
             exit 1
           fi
 
+          echo "Schedule: ${SCHEDULE:-manual}"
           echo "Action: $ACTION"
+
           echo "action=$ACTION" >> "$GITHUB_OUTPUT"
+
+      # =========================================================
+      # Get latest deployment
+      # =========================================================
 
       - name: Get latest deployment
         id: deployment
@@ -57,9 +79,10 @@ jobs:
           PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
         run: |
-          set -e
+          set -euo pipefail
 
           RESPONSE=$(curl -sS \
+            --fail-with-body \
             -X POST \
             "https://backboard.railway.com/graphql/v2" \
             -H "Project-Access-Token: $RAILWAY_TOKEN" \
@@ -68,7 +91,7 @@ jobs:
               --arg projectId "$PROJECT_ID" \
               --arg serviceId "$SERVICE_ID" \
               '{
-                query: "query deployments($input: DeploymentListInput!, $first: Int) { deployments(input: $input, first: $first) { edges { node { id status createdAt } } } }",
+                query: "query deployments($input: DeploymentListInput!, $first: Int) { deployments(input: $input, first: $first) { edges { node { id status createdAt updatedAt } } } }",
                 variables: {
                   input: {
                     projectId: $projectId,
@@ -80,57 +103,58 @@ jobs:
 
           echo "$RESPONSE" | jq .
 
-          if echo "$RESPONSE" | jq -e '.errors' >/dev/null; then
-            echo "Failed to query Railway deployments."
+          if echo "$RESPONSE" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+            echo "Railway returned GraphQL errors."
             exit 1
           fi
 
-          DEPLOYMENT_ID=$(echo "$RESPONSE" | jq -r '
+          DEPLOYMENT=$(echo "$RESPONSE" | jq -c '
             .data.deployments.edges
             | map(.node)
             | sort_by(.createdAt)
             | reverse
-            | .[0].id
+            | .[0]
           ')
 
-          STATUS=$(echo "$RESPONSE" | jq -r '
-            .data.deployments.edges
-            | map(.node)
-            | sort_by(.createdAt)
-            | reverse
-            | .[0].status
-          ')
-
-          if [ -z "$DEPLOYMENT_ID" ] || [ "$DEPLOYMENT_ID" = "null" ]; then
+          if [ -z "$DEPLOYMENT" ] || [ "$DEPLOYMENT" = "null" ]; then
             echo "No deployment found."
             exit 1
           fi
 
+          DEPLOYMENT_ID=$(echo "$DEPLOYMENT" | jq -r '.id')
+          STATUS=$(echo "$DEPLOYMENT" | jq -r '.status')
+          CREATED_AT=$(echo "$DEPLOYMENT" | jq -r '.createdAt')
+
           echo "Latest deployment: $DEPLOYMENT_ID"
-          echo "Current status: $STATUS"
+          echo "Railway status: $STATUS"
+          echo "Created: $CREATED_AT"
 
           echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      # =========================================================
+      # STOP
+      #
+      # Do NOT check STATUS == SUCCESS.
+      #
+      # Railway can retain SUCCESS after a deployment has been
+      # stopped, so the status cannot reliably tell us whether
+      # the container is actually running.
+      # =========================================================
 
       - name: Stop bot
         if: steps.action.outputs.action == 'stop'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
-          CURRENT_STATUS: ${{ steps.deployment.outputs.status }}
         run: |
-          set -e
+          set -euo pipefail
 
-          if [ "$CURRENT_STATUS" != "SUCCESS" ]; then
-            echo "Bot is not currently running."
-            echo "Current deployment status: $CURRENT_STATUS"
-            echo "Nothing to stop."
-            exit 0
-          fi
-
-          echo "Stopping deployment: $DEPLOYMENT_ID"
+          echo "Stopping deployment:"
+          echo "$DEPLOYMENT_ID"
 
           RESPONSE=$(curl -sS \
+            --fail-with-body \
             -X POST \
             "https://backboard.railway.com/graphql/v2" \
             -H "Project-Access-Token: $RAILWAY_TOKEN" \
@@ -146,32 +170,41 @@ jobs:
 
           echo "$RESPONSE" | jq .
 
-          if echo "$RESPONSE" | jq -e '.errors' >/dev/null; then
+          if echo "$RESPONSE" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
             echo "Railway failed to stop the deployment."
             exit 1
           fi
 
-          echo "Stop request sent successfully."
+          RESULT=$(echo "$RESPONSE" | jq -r '.data.deploymentStop')
+
+          if [ "$RESULT" != "true" ]; then
+            echo "Railway did not confirm the stop request."
+            exit 1
+          fi
+
+          echo "Bot stop request completed successfully."
+
+      # =========================================================
+      # START / RESTART
+      #
+      # Do NOT check STATUS == SUCCESS.
+      #
+      # Always restart the latest deployment.
+      # =========================================================
 
       - name: Start bot
         if: steps.action.outputs.action == 'start'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
-          CURRENT_STATUS: ${{ steps.deployment.outputs.status }}
         run: |
-          set -e
+          set -euo pipefail
 
-          if [ "$CURRENT_STATUS" = "SUCCESS" ]; then
-            echo "Bot is already running."
-            echo "Nothing to start."
-            exit 0
-          fi
-
-          echo "Starting deployment: $DEPLOYMENT_ID"
-          echo "Current status: $CURRENT_STATUS"
+          echo "Restarting deployment:"
+          echo "$DEPLOYMENT_ID"
 
           RESPONSE=$(curl -sS \
+            --fail-with-body \
             -X POST \
             "https://backboard.railway.com/graphql/v2" \
             -H "Project-Access-Token: $RAILWAY_TOKEN" \
@@ -179,7 +212,7 @@ jobs:
             --data "$(jq -n \
               --arg id "$DEPLOYMENT_ID" \
               '{
-                query: "mutation deploymentRedeploy($id: String!) { deploymentRedeploy(id: $id) { id status } }",
+                query: "mutation deploymentRestart($id: String!) { deploymentRestart(id: $id) }",
                 variables: {
                   id: $id
                 }
@@ -187,54 +220,16 @@ jobs:
 
           echo "$RESPONSE" | jq .
 
-          if echo "$RESPONSE" | jq -e '.errors' >/dev/null; then
-            echo "Railway failed to start the deployment."
+          if echo "$RESPONSE" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+            echo "Railway failed to restart the deployment."
             exit 1
           fi
 
-          NEW_DEPLOYMENT_ID=$(echo "$RESPONSE" | jq -r '.data.deploymentRedeploy.id')
+          RESULT=$(echo "$RESPONSE" | jq -r '.data.deploymentRestart')
 
-          if [ -z "$NEW_DEPLOYMENT_ID" ] || [ "$NEW_DEPLOYMENT_ID" = "null" ]; then
-            echo "Railway did not return a deployment ID."
+          if [ "$RESULT" != "true" ]; then
+            echo "Railway did not confirm the restart request."
             exit 1
           fi
 
-          echo "New deployment: $NEW_DEPLOYMENT_ID"
-
-          echo "Waiting for deployment to become active..."
-
-          for i in {1..36}; do
-
-            RESPONSE=$(curl -sS \
-              -X POST \
-              "https://backboard.railway.com/graphql/v2" \
-              -H "Project-Access-Token: $RAILWAY_TOKEN" \
-              -H "Content-Type: application/json" \
-              --data "$(jq -n \
-                --arg id "$NEW_DEPLOYMENT_ID" \
-                '{
-                  query: "query deployment($id: String!) { deployment(id: $id) { id status } }",
-                  variables: {
-                    id: $id
-                  }
-                }')")
-
-            STATUS=$(echo "$RESPONSE" | jq -r '.data.deployment.status // empty')
-
-            echo "Deployment status: $STATUS"
-
-            if [ "$STATUS" = "SUCCESS" ]; then
-              echo "Bot is running successfully."
-              exit 0
-            fi
-
-            if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CRASHED" ]; then
-              echo "Deployment failed with status: $STATUS"
-              exit 1
-            fi
-
-            sleep 10
-          done
-
-          echo "Timed out waiting for Railway deployment."
-          exit 1
+          echo "Bot restart request completed successfully."
