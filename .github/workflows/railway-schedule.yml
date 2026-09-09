@@ -7,7 +7,7 @@ on:
       timezone: "Asia/Kolkata"
 
     # TEMPORARY: 10:00 IST
-    - cron: "0 10 * * *"
+    - cron: "30 10 * * *"
       timezone: "Asia/Kolkata"
 
     # 00:00 IST
