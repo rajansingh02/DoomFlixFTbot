@@ -51,7 +51,7 @@ MAX_SEARCH_QUEUE = 10
 # NOTE: this must be a channel the Telethon account can already see.
 CHANNEL_DEFAULT = "@doomflixmovies"
 
-MAX_MOVIE_PAYLOAD_LENGTH = 80
+MAX_MOVIE_PAYLOAD_LENGTH = 64
 
 # Telegram's hard cap on a single message is 4096 characters.
 # Leave headroom for HTML tags/entities that expand on render.

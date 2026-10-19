@@ -201,6 +201,36 @@ async def perform_movie_search(
         return
 
     buttons = []
+    requester = update.effective_user
+    group = update.effective_chat
+
+    if not requester or not group:
+        if status_message:
+            try:
+                await status_message.edit_text(
+                    "⚠️ Search results were unavailable."
+                )
+            except TelegramError:
+                pass
+        return
+
+    # Normal searches authorize the person who issued the command.
+    authorized_user_id = requester.id
+
+    # When replying to another human user's message, authorize that
+    # person instead. If the reply is to a bot, channel post, anonymous
+    # admin, or a message without a normal user sender, keep the default.
+    source_message = update.effective_message
+    replied_message = (
+        source_message.reply_to_message if source_message else None
+    )
+
+    if (
+        replied_message
+        and replied_message.from_user
+        and not replied_message.from_user.is_bot
+    ):
+        authorized_user_id = replied_message.from_user.id
 
     for message in results:
         title = (message.message or "").strip()
@@ -212,10 +242,13 @@ async def perform_movie_search(
 
         deep_link = make_movie_deep_link(
             message_id=message.id,
-            group_id=update.effective_chat.id,
+            group_id=group.id,
+            requester_user_id=authorized_user_id,
         )
 
-        buttons.append([InlineKeyboardButton(title, url=deep_link)])
+        buttons.append([
+            InlineKeyboardButton(title, url=deep_link)
+        ])
 
     if not buttons:
         if status_message:

@@ -8,7 +8,11 @@ from telegram import Update
 from telegram.constants import ChatType
 from telegram.ext import ContextTypes
 
-from access_control import check_private_access, get_group_access_type, is_bot_owner
+from access_control import (
+    check_private_access,
+    get_group_access_type,
+    is_bot_owner,
+)
 from db import is_group_enabled, is_user_banned
 from movie_search import send_movie_post
 from search_queue import enqueue_movie_search
@@ -18,19 +22,20 @@ _MOVIE_TEXT_RE = re.compile(r"^movie\s+(.+?)\s*$", re.IGNORECASE)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_chat or not update.message or not update.effective_user:
+    if (
+        not update.effective_chat
+        or not update.message
+        or not update.effective_user
+    ):
         return
 
     chat = update.effective_chat
+    user = update.effective_user
 
-    # =====================================================
-    # /start WITHOUT payload
-    # =====================================================
+    # /start without a payload: show help.
     if not context.args:
         if chat.type == ChatType.PRIVATE:
-            if not is_bot_owner(update) and await is_user_banned(
-                update.effective_user.id
-            ):
+            if not is_bot_owner(update) and await is_user_banned(user.id):
                 await update.message.reply_text(
                     "🚫 You are banned from using this bot."
                 )
@@ -49,7 +54,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-            # /start help is not a search — must not consume the daily limit.
+            # Help must not consume the daily search limit.
             if not await is_group_enabled(chat.id):
                 return
 
@@ -66,9 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # =====================================================
-    # /start WITH movie payload
-    # =====================================================
+    # /start with a signed movie deep-link payload.
     payload = context.args[0].strip()
     movie_data = parse_movie_payload(payload)
 
@@ -76,22 +79,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Invalid movie link.")
         return
 
-    message_id = movie_data["message_id"]
-
     if chat.type != ChatType.PRIVATE:
         await update.message.reply_text(
             "⚠️ Please open the movie link in a private chat with the bot."
         )
         return
 
+    requester_user_id = movie_data.get("requester_user_id")
+
+    # Requester-bound links may only be redeemed by their intended user.
+    # Legacy signed links have requester_user_id=None and remain supported.
+    if (
+        requester_user_id is not None
+        and requester_user_id != user.id
+    ):
+        await update.message.reply_text(
+            "🚫 This movie link was created for another user."
+        )
+        return
+
     if not await check_private_access(update):
         return
 
-    await send_movie_post(update=update, context=context, message_id=message_id)
+    await send_movie_post(
+        update=update,
+        context=context,
+        message_id=movie_data["message_id"],
+    )
 
 
-async def movie_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.effective_chat or not update.effective_user:
+async def movie_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    if (
+        not update.message
+        or not update.effective_chat
+        or not update.effective_user
+    ):
         return
 
     chat = update.effective_chat
@@ -134,10 +159,17 @@ async def movie_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def group_text_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Group searches: "movie <title>" (case-insensitive)."""
+async def group_text_search(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """Handle group messages matching 'movie <title>'."""
 
-    if not update.message or not update.effective_chat or not update.effective_user:
+    if (
+        not update.message
+        or not update.effective_chat
+        or not update.effective_user
+    ):
         return
 
     chat = update.effective_chat

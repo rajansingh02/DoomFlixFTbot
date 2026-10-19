@@ -1,10 +1,22 @@
 import asyncio
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 from pymongo.errors import PyMongoError
 
-from config import BOT_TOKEN, MAX_SEARCH_QUEUE, ensure_indexes, mongo_client, telethon_client
+from config import (
+    BOT_TOKEN,
+    MAX_SEARCH_QUEUE,
+    ensure_indexes,
+    mongo_client,
+    telethon_client,
+)
 from db import load_configured_channel, load_enabled_groups
 from handlers_owner import (
     ban_command,
@@ -18,14 +30,21 @@ from handlers_owner import (
     status_command,
     unban_command,
 )
-from handlers_user import group_text_search, movie_command, start
+from handlers_user import (
+    group_text_search,
+    movie_command,
+    start,
+)
 from movie_search import perform_movie_search
 from search_queue import movie_search_worker
 
 search_worker_task = None
 
 
-async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+async def global_error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     error = context.error
     if error:
         print(f"Unhandled Telegram error: {type(error).__name__}: {error}")
@@ -66,7 +85,10 @@ async def main():
             raise RuntimeError("SESSION_STRING is not authorized.")
 
         me = await telethon_client.get_me()
-        print(f"Telethon connected as {getattr(me, 'username', None) or me.id}")
+        print(
+            f"Telethon connected as "
+            f"{getattr(me, 'username', None) or me.id}"
+        )
 
     except Exception:
         try:
@@ -83,25 +105,25 @@ async def main():
     # -----------------------------------------------------
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Normal commands
+    # Normal commands.
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("movie", movie_command))
     application.add_handler(CommandHandler("setchannel", set_channel_command))
     application.add_handler(CommandHandler("channel", channel_command))
 
-    # Owner: group controls
+    # Owner: group controls.
     application.add_handler(CommandHandler("enable", enable_group))
     application.add_handler(CommandHandler("disable", disable_group))
     application.add_handler(CommandHandler("groups", groups_command))
     application.add_handler(CommandHandler("status", status_command))
 
-    # Owner: moderation
+    # Owner: moderation.
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("banlist", banlist_command))
     application.add_handler(CommandHandler("resetlimit", reset_limit_command))
 
-    # Group text searches
+    # Group text searches.
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_search)
     )
@@ -127,7 +149,10 @@ async def main():
         )
 
         print("DoomFlix bot is running.")
-        print(f"Movie search queue: 1 active + {MAX_SEARCH_QUEUE} waiting.")
+        print(
+            f"Movie search queue: 1 active + "
+            f"{MAX_SEARCH_QUEUE} waiting."
+        )
 
         await telethon_client.run_until_disconnected()
 
