@@ -22,7 +22,7 @@ from telethon.sessions import StringSession
 load_dotenv()
 
 print(
-    "RAILWAY BOT_TOKEN CHECK:",
+    "BOT_TOKEN configured:",
     bool(os.getenv("BOT_TOKEN")),
 )
 
