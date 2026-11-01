@@ -9,6 +9,7 @@ python-telegram-bot needs an int chat_id rather than a numeric string.
 
 import html
 import re
+from urllib.parse import quote_plus
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
@@ -186,16 +187,26 @@ async def perform_movie_search(
         safe_query = html.escape(query)
         text = (
             "🎬 <b>Movie Search</b>\n\n"
-            f"No titles found for <b>“{safe_query}”</b>.\n\n"
+            f"No matching movie found for: <b>“{safe_query}”</b>.\n\n"
             "⚠️ Make sure your movie title is correct.\n\n"
             "📩 Movie not showing? Send "
             "<code>#request [Movie Title] [YEAR]</code>\n"
             "It’ll be uploaded if available."
         )
+        google_url = (
+            "https://www.google.com/search?q=" + quote_plus(query)
+        )
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Search on Google ↗", url=google_url)
+        ]])
 
         if status_message:
             try:
-                await status_message.edit_text(text, parse_mode="HTML")
+                await status_message.edit_text(
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
             except TelegramError:
                 pass
         return
