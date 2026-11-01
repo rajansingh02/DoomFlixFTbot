@@ -1,5 +1,5 @@
 """
-/start, /movie, and the "movie <title>" plain-text group trigger.
+/start, /movie, and plain-text group searches.
 """
 
 import re
@@ -45,7 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🎬 <b>DoomFlix Movie Search</b>\n\n"
                 "This bot belongs to "
                 "<a href=\"https://t.me/doomflix\"><b>DoomFlix</b></a>.\n\n"
-                "🔎 Use <code>movie &lt;title&gt;</code> in a group to search for movies.\n\n"
+                "🔎 Send a movie title in an enabled group to search.\n\n"
                 "✨ Discover what this bot can do in "
                 "<a href=\"https://t.me/request_movies_series_anime\">"
                 "<b>DoomFlix's Official Request Group</b></a>.",
@@ -63,8 +63,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             await update.message.reply_text(
-                "🎬 Send a movie request using:\n\n"
-                "<code>movie Movie Name</code>",
+                "🎬 Send a movie title to search.\n"
+                "You can also use <code>movie Movie Name</code>.",
                 parse_mode="HTML",
             )
             return
@@ -163,7 +163,7 @@ async def group_text_search(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    """Handle group messages matching 'movie <title>'."""
+    """Handle plain-text movie searches in enabled groups."""
 
     if (
         not update.message
@@ -181,14 +181,11 @@ async def group_text_search(
     if not text:
         return
 
-    match = _MOVIE_TEXT_RE.match(text)
-    if not match:
-        return
-
     if not await is_group_enabled(chat.id):
         return
 
-    query = match.group(1).strip()
+    match = _MOVIE_TEXT_RE.match(text)
+    query = match.group(1).strip() if match else text
     if not query:
         return
 
