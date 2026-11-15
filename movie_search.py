@@ -117,16 +117,27 @@ async def perform_movie_search(
     if len(query) > 200:
         query = query[:200].strip()
 
+    # "movie" at the beginning bypasses the ignore list.
+    movie_prefix = re.match(r"^movie(?:\s+|$)", query, re.IGNORECASE)
+    bypass_ignore = movie_prefix is not None
+
+    if bypass_ignore:
+        query = query[movie_prefix.end():].strip()
+
+    if not query:
+        return
+
     status_message = None
     channel = get_configured_channel()
 
     try:
-        ignored_terms = await get_ignored_terms()
-        query = remove_ignored_terms(query, ignored_terms)
+        if not bypass_ignore:
+            ignored_terms = await get_ignored_terms()
+            query = remove_ignored_terms(query, ignored_terms)
 
-        # Silently stop if nothing remains after removing ignored terms.
-        if not query:
-            return
+            # Silently stop if nothing remains after removing ignored terms.
+            if not query:
+                return
 
         try:
             status_message = await update.effective_message.reply_text(
