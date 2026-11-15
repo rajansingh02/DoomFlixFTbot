@@ -25,7 +25,10 @@ from handlers_owner import (
     disable_group,
     enable_group,
     groups_command,
+    ignore_command,
+    ignorelist_command,
     reset_limit_command,
+    rignore_command,
     set_channel_command,
     status_command,
     unban_command,
@@ -122,6 +125,9 @@ async def main():
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("banlist", banlist_command))
     application.add_handler(CommandHandler("resetlimit", reset_limit_command))
+    application.add_handler(CommandHandler("ignore", ignore_command))
+    application.add_handler(CommandHandler("rignore", rignore_command))
+    application.add_handler(CommandHandler("ignorelist", ignorelist_command))
 
     # Group text searches.
     application.add_handler(

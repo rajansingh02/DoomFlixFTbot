@@ -26,22 +26,40 @@ from config import (
 )
 from config import telethon_client
 from db import (
+    add_ignored_term,
     ban_user_db,
     disable_group_cache,
     enable_group_cache,
     enabled_groups,
     get_cached_group_link,
     get_configured_channel,
+    get_ignored_terms,
     group_cache_lock,
     list_banned_users,
+    remove_ignored_term,
     reset_user_limits_db,
     set_cached_group_link,
     set_configured_channel,
     unban_user_db,
 )
+from ignore_filter import normalize_search_text
 from messaging_utils import send_chunked_html
 from search_queue import get_waiting_search_count
 from config import MAX_SEARCH_QUEUE
+
+
+async def _private_owner_message(update: Update):
+    if not is_bot_owner(update) or not update.message:
+        return None
+
+    chat = update.effective_chat
+    if not chat or chat.type != ChatType.PRIVATE:
+        await update.message.reply_text(
+            "❌ This command can only be used in a private chat."
+        )
+        return None
+
+    return update.message
 
 
 # =========================================================
@@ -263,6 +281,82 @@ async def reset_limit_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except PyMongoError as e:
         print(f"Reset limit command error: {e}")
         await update.message.reply_text("❌ Failed to reset the user's limits.")
+
+
+# =========================================================
+# Owner: global movie-search ignore list
+# =========================================================
+
+async def ignore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = await _private_owner_message(update)
+    if not message:
+        return
+
+    term = " ".join(context.args or []).strip()
+    if not term or not normalize_search_text(term):
+        await message.reply_text("Usage: /ignore TERM")
+        return
+
+    try:
+        await add_ignored_term(term)
+    except PyMongoError as e:
+        print(f"Add ignored term error: {e}")
+        await message.reply_text("❌ Failed to update the ignore list.")
+        return
+
+    await message.reply_text(f"{term} will be ignored")
+
+
+async def rignore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = await _private_owner_message(update)
+    if not message:
+        return
+
+    term = " ".join(context.args or []).strip()
+    if not term or not normalize_search_text(term):
+        await message.reply_text("Usage: /rignore TERM")
+        return
+
+    try:
+        await remove_ignored_term(term)
+    except PyMongoError as e:
+        print(f"Remove ignored term error: {e}")
+        await message.reply_text("❌ Failed to update the ignore list.")
+        return
+
+    await message.reply_text(f"{term} removed from ignore list")
+
+
+async def ignorelist_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    message = await _private_owner_message(update)
+    if not message:
+        return
+
+    try:
+        terms = await get_ignored_terms()
+    except PyMongoError as e:
+        print(f"Load ignore list error: {e}")
+        await message.reply_text("❌ Failed to load the ignore list.")
+        return
+
+    if not terms:
+        await message.reply_text("📋 No terms are currently ignored.")
+        return
+
+    lines = [
+        "📋 <b>Ignored Terms</b>",
+        "",
+        f"Total: <b>{len(terms)}</b>",
+        "",
+    ]
+    lines.extend(
+        f"• <code>{html.escape(term)}</code>"
+        for term in terms
+    )
+    await send_chunked_html(message, lines)
 
 
 # =========================================================

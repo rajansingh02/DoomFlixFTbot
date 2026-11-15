@@ -22,6 +22,7 @@ from config import (
     rate_limits,
     CHANNEL_DEFAULT,
 )
+from ignore_filter import normalize_search_text
 
 
 def today_string() -> str:
@@ -432,3 +433,54 @@ async def set_configured_channel(channel: str):
         _configured_channel = channel
 
     return result
+
+
+# =========================================================
+# Global movie-search ignore terms
+# =========================================================
+
+async def get_ignored_terms() -> list[str]:
+    def operation():
+        document = bot_settings.find_one(
+            {"_id": "ignored_terms"},
+            {"_id": 0, "terms": 1},
+        )
+        return document.get("terms", []) if document else []
+
+    terms = await asyncio.to_thread(operation)
+    normalized_terms = []
+    for term in terms:
+        if isinstance(term, str):
+            normalized = normalize_search_text(term)
+            if normalized:
+                normalized_terms.append(normalized)
+    return list(dict.fromkeys(normalized_terms))
+
+
+async def add_ignored_term(term: str):
+    normalized_term = normalize_search_text(term)
+    if not normalized_term:
+        raise ValueError("Ignore term cannot be empty")
+
+    def operation():
+        return bot_settings.update_one(
+            {"_id": "ignored_terms"},
+            {"$addToSet": {"terms": normalized_term}},
+            upsert=True,
+        )
+
+    return await asyncio.to_thread(operation)
+
+
+async def remove_ignored_term(term: str):
+    normalized_term = normalize_search_text(term)
+    if not normalized_term:
+        raise ValueError("Ignore term cannot be empty")
+
+    def operation():
+        return bot_settings.update_one(
+            {"_id": "ignored_terms"},
+            {"$pull": {"terms": normalized_term}},
+        )
+
+    return await asyncio.to_thread(operation)

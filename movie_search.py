@@ -15,11 +15,16 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 from telethon.errors import FloodWaitError, RPCError
+from pymongo.errors import PyMongoError
 
 from channel_utils import channel_for_bot_api, channel_for_telethon
 from config import MAX_RESULTS, telethon_client
-from db import get_configured_channel
+from db import get_configured_channel, get_ignored_terms
+from ignore_filter import contains_ignored_term, normalize_search_text
 from security import make_movie_deep_link
+
+
+MAX_SEARCH_CANDIDATES = MAX_RESULTS * 10
 
 
 async def send_movie_post(
@@ -124,30 +129,48 @@ async def perform_movie_search(
     channel = get_configured_channel()
 
     try:
+        ignored_terms = await get_ignored_terms()
         telethon_peer = channel_for_telethon(channel)
 
-        results = []
+        search_queries = [query]
+        normalized_query = normalize_search_text(query)
+        if normalized_query and normalized_query.casefold() != query.casefold():
+            # Telegram searches server-side; retry punctuation-normalized
+            # text rather than scanning the channel locally.
+            search_queries.append(normalized_query)
 
-        async for message in telethon_client.iter_messages(
-            telethon_peer,
-            search=query,
-            limit=MAX_RESULTS,
-        ):
-            if not message or not message.id:
-                continue
+        per_query_limit = max(
+            1,
+            MAX_SEARCH_CANDIDATES // len(search_queries),
+        )
+        candidates = {}
 
-            # Ignore service messages.
-            if message.action:
-                continue
+        for search_query in search_queries:
+            async for message in telethon_client.iter_messages(
+                telethon_peer,
+                search=search_query,
+                limit=per_query_limit,
+            ):
+                if not message or not message.id:
+                    continue
 
-            text = (getattr(message, "message", None) or "").strip()
-            if not text:
-                continue
+                # Ignore service messages.
+                if message.action:
+                    continue
 
-            results.append(message)
+                text = (getattr(message, "message", None) or "").strip()
+                if not text or contains_ignored_term(text, ignored_terms):
+                    continue
 
-            if len(results) >= MAX_RESULTS:
-                break
+                candidates[message.id] = message
+
+        # Merge newest-first server-side searches before applying the
+        # existing result limit.
+        results = sorted(
+            candidates.values(),
+            key=lambda message: message.id,
+            reverse=True,
+        )[:MAX_RESULTS]
 
     except FloodWaitError as e:
         print(f"Search flood wait: {e.seconds}s")
@@ -156,6 +179,17 @@ async def perform_movie_search(
                 await status_message.edit_text(
                     "⏳ Telegram is temporarily rate-limiting searches.\n\n"
                     f"Try again in about {e.seconds} seconds."
+                )
+            except TelegramError:
+                pass
+        return
+
+    except PyMongoError as e:
+        print(f"Search ignore-list database error: {e}")
+        if status_message:
+            try:
+                await status_message.edit_text(
+                    "⚠️ Movie search is temporarily unavailable."
                 )
             except TelegramError:
                 pass
