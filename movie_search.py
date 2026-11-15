@@ -20,7 +20,7 @@ from pymongo.errors import PyMongoError
 from channel_utils import channel_for_bot_api, channel_for_telethon
 from config import MAX_RESULTS, telethon_client
 from db import get_configured_channel, get_ignored_terms
-from ignore_filter import contains_ignored_term, normalize_search_text
+from ignore_filter import normalize_search_text, remove_ignored_terms
 from security import make_movie_deep_link
 
 
@@ -130,6 +130,17 @@ async def perform_movie_search(
 
     try:
         ignored_terms = await get_ignored_terms()
+        query = remove_ignored_terms(query, ignored_terms)
+        if not query:
+            if status_message:
+                try:
+                    await status_message.edit_text(
+                        "⚠️ Your search only contained ignored terms."
+                    )
+                except TelegramError:
+                    pass
+            return
+
         telethon_peer = channel_for_telethon(channel)
 
         search_queries = [query]
@@ -139,17 +150,13 @@ async def perform_movie_search(
             # text rather than scanning the channel locally.
             search_queries.append(normalized_query)
 
-        per_query_limit = max(
-            1,
-            MAX_SEARCH_CANDIDATES // len(search_queries),
-        )
         candidates = {}
 
         for search_query in search_queries:
             async for message in telethon_client.iter_messages(
                 telethon_peer,
                 search=search_query,
-                limit=per_query_limit,
+                limit=MAX_RESULTS,
             ):
                 if not message or not message.id:
                     continue
@@ -159,7 +166,7 @@ async def perform_movie_search(
                     continue
 
                 text = (getattr(message, "message", None) or "").strip()
-                if not text or contains_ignored_term(text, ignored_terms):
+                if not text:
                     continue
 
                 candidates[message.id] = message
