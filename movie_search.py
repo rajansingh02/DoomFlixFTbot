@@ -118,33 +118,28 @@ async def perform_movie_search(
         query = query[:200].strip()
 
     status_message = None
-
-    try:
-        status_message = await update.effective_message.reply_text(
-            "🔎 Searching..."
-        )
-    except TelegramError:
-        pass
-
     channel = get_configured_channel()
 
     try:
         ignored_terms = await get_ignored_terms()
         query = remove_ignored_terms(query, ignored_terms)
+
+        # Silently stop if nothing remains after removing ignored terms.
         if not query:
-            if status_message:
-                try:
-                    await status_message.edit_text(
-                        "⚠️ Your search only contained ignored terms."
-                    )
-                except TelegramError:
-                    pass
             return
+
+        try:
+            status_message = await update.effective_message.reply_text(
+                "🔎 Searching..."
+            )
+        except TelegramError:
+            pass
 
         telethon_peer = channel_for_telethon(channel)
 
         search_queries = [query]
         normalized_query = normalize_search_text(query)
+
         if normalized_query and normalized_query.casefold() != query.casefold():
             # Telegram searches server-side; retry punctuation-normalized
             # text rather than scanning the channel locally.
@@ -234,9 +229,11 @@ async def perform_movie_search(
             "<code>#request [Movie Title] [YEAR]</code>\n"
             "It’ll be uploaded if available."
         )
+
         google_url = (
             "https://www.google.com/search?q=" + quote_plus(query)
         )
+
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton("Search on Google ↗", url=google_url)
         ]])
